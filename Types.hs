@@ -15,7 +15,9 @@ import Text.Parsec as P
 -- import Text.Parsec.Number as P
 
 traceMsgIt msg x = trace (msg ++ show x) x
+
 trace' = const id
+
 --
 -- ALists
 --
@@ -426,13 +428,12 @@ numParser = do str <- (\f a b c -> f ++ a ++ b ++ c) <$> option "" (string "-") 
 
 strParser = bracketParser "\"" "\"" $ P.many $ (string "\\" *> anyChar) P.<|> anyChar
 
-funParser :: [VarId] -> Parsec String [VarId] Term
 funParser (newVs :: [VarId]) = do
-  vs :: [VarId] <- getState
-  putState (newVs ++ vs)
+  vs <- bvars <$> getState
+  modifyState $ \st -> st{bvars = newVs ++ vs}
   myString "->"
   e <- termParser
-  putState vs
+  modifyState $ \st -> st{bvars = vs}
   return e
 caseParser = do
   p <- patParser
@@ -443,11 +444,10 @@ lamParser = do
   v <- identifierParser
   e <- funParser [v]
   return $ Lam v e
-varParser :: Parsec String [VarId] Term
 varParser = do
   x <- identifierParser
   vs <- getState
-  if x `elem` reservedWords then parserZero  else return $ if x `elem` vs then Var x else Const x
+  if x `elem` reservedWords then parserZero  else return $ if x `elem` bvars vs then Var x else Const x
 termParser' = (choice $
                [ Num <$> numParser
                , Str <$> strParser
@@ -490,5 +490,11 @@ parseData = do
   modifyState (\st -> st{tbvars = tbvs})
   let tcons' = map (second $ \t -> abstractUnivOver t tpids') tcons
   modifyState (\st -> st{constructors = tcons' ++ constructors st})
-  stateUser <$> getParserState
 
+parseDefn = do
+    name <- identifierParser
+    myString "="
+    defn <- termParser
+    modifyState $ \st -> st{definitions = (name, defn) : definitions st}
+
+parseProgram = sepBy1 (parseData P.<|> parseDefn) (myString ";") >>   stateUser <$> getParserState
